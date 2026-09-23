@@ -1,0 +1,43 @@
+#!/bin/bash
+# sp-release [--force]
+# Vrati "stol": worktree natrag na scratch/wtN (reset na integ), otključaj.
+# Bez --force odbija ako grana nije mergeana u integ ili je radna kopija dirty.
+set -euo pipefail
+. "$HOME/.local/bin/sp-common.sh"
+
+FORCE=0; for a in "$@"; do [ "$a" = "--force" ] && FORCE=1; done
+LABEL=$(sp_label_for "$PWD") || { echo "Nema poola za ovu mapu." >&2; exit 1; }
+wt=$(git rev-parse --show-toplevel)
+root=$(sp_repo_root)
+[ "$wt" = "$root" ] && { echo "sp-release se pokreće iz worktreeja, ne glavnog repoa." >&2; exit 1; }
+
+n=$(sp_wt_index "$wt" "$LABEL")
+integ=$(sp_integ "$LABEL"); integ_ref=$(sp_integ_ref "$LABEL")
+cur=$(sp_wt_branch "$wt")
+
+clean=1; sp_wt_clean "$wt" || clean=0
+merged=1
+if [ "$cur" != "scratch/wt$n" ]; then
+  git -C "$wt" merge-base --is-ancestor HEAD "$integ_ref" 2>/dev/null || merged=0
+fi
+
+if [ "$FORCE" != 1 ] && { [ "$clean" != 1 ] || [ "$merged" != 1 ]; }; then
+  msg="Odbijeno: "
+  [ "$clean" = 1 ] || msg+="radna kopija je dirty; "
+  [ "$merged" = 1 ] || msg+="grana '$cur' nije mergeana u $integ; "
+  msg+="koristi 'sp-release --force' ako si siguran (izgubit ćeš nemergeani rad)."
+  echo "$msg" >&2
+  exit 1
+fi
+
+cof=""; [ "$FORCE" = 1 ] && cof="-f"
+git -C "$wt" checkout $cof -B "scratch/wt$n" "$integ_ref" >/dev/null 2>&1
+case "$cur" in
+  feat/*)
+    if [ "$merged" = 1 ]; then git -C "$wt" branch -d "$cur" >/dev/null 2>&1 || true
+    else git -C "$wt" branch -D "$cur" >/dev/null 2>&1 || true; fi
+  ;;
+esac
+sp_unlock "$LABEL" "$n"
+sp_regen_mirror "$LABEL"
+echo "Oslobođen wt$n (grana natrag scratch/wt$n)."

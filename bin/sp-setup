@@ -1,0 +1,69 @@
+#!/bin/bash
+# sp-setup [label] [--force]
+# Jednokratni bootstrap poola: marker + pre-commit hook + baseline worktreei.
+# Ne-destruktivan: ne gazi postojeći marker/hook bez --force; staje na migraciju.
+set -euo pipefail
+. "$HOME/.local/bin/sp-common.sh"
+
+FORCE=0; LABEL=""
+for a in "$@"; do case "$a" in --force) FORCE=1 ;; --*) ;; *) LABEL="$a" ;; esac; done
+
+root=$(sp_repo_root) || { echo "Nisi u git repou." >&2; exit 1; }
+[ -z "$LABEL" ] && LABEL=$(basename "$root" | sed -E 's/-[0-9]+$//')
+prefix="${LABEL}-wt"
+# integracijska grana: SP_INTEG, inače main, inače master, inače trenutna grana
+if [ -n "${SP_INTEG:-}" ]; then integ="$SP_INTEG"
+elif git -C "$root" show-ref --verify --quiet refs/heads/main; then integ="main"
+elif git -C "$root" show-ref --verify --quiet refs/heads/master; then integ="master"
+else integ=$(git -C "$root" symbolic-ref --short -q HEAD || echo main); fi
+baseline=5
+parent=$(dirname "$root")
+
+mkdir -p "$SP_POOLS_DIR" "$SP_LOCKS_DIR/$LABEL"
+
+marker="$SP_POOLS_DIR/$LABEL"
+if [ ! -f "$marker" ] || [ "$FORCE" = 1 ]; then
+  { echo "repo=$root"; echo "prefix=$prefix"; echo "integ=$integ"; echo "baseline=$baseline"; } >"$marker"
+  echo "Pool marker: $marker (label=$LABEL)"
+fi
+
+gitdir=$(cd "$root" && cd "$(git rev-parse --git-common-dir)" && pwd)
+hook="$gitdir/hooks/pre-commit"
+if [ ! -e "$hook" ] || [ "$FORCE" = 1 ]; then
+  cat >"$hook" <<HOOK
+#!/bin/sh
+# ClaudeGrid session-pool guardrail: zabrana direktnog commita na integracijsku granu.
+branch=\$(git symbolic-ref --short -q HEAD || echo "")
+if [ "\$branch" = "$integ" ]; then
+  echo "BLOKIRANO: direktan commit na '$integ'. Radi na feat/ grani (sp-claim / sp-name)." >&2
+  exit 1
+fi
+HOOK
+  chmod +x "$hook"
+  echo "Hook: $hook"
+fi
+
+integ_ref=$(sp_integ_ref "$LABEL")
+for n in $(seq 1 "$baseline"); do
+  wt="$parent/$prefix$n"
+  [ -d "$wt" ] && continue
+  if git -C "$root" show-ref --verify --quiet "refs/heads/scratch/wt$n"; then
+    git -C "$root" worktree add "$wt" "scratch/wt$n" >/dev/null
+  else
+    git -C "$root" worktree add "$wt" -b "scratch/wt$n" "$integ_ref" >/dev/null
+  fi
+  echo "worktree: $wt (scratch/wt$n)"
+done
+
+sp_regen_mirror "$LABEL"
+
+cur=$(sp_wt_branch "$root"); [ -z "$cur" ] && cur="?"
+if [ "$cur" != "$integ" ] || ! sp_wt_clean "$root"; then
+  echo ""
+  echo "PAŽNJA (migracija): glavni repo je na '$cur'$(sp_wt_clean "$root" || echo ', radna kopija NIJE čista')."
+  echo "Prije korištenja poola:"
+  echo "  1) riješi untracked/uncommitted (commit na trenutnu granu ili git stash)"
+  echo "  2) (cd \"$root\" && git checkout $integ)"
+  echo "  3) sp-adopt <feat-grana>   (za svaku postojeću granu)"
+fi
+echo "Gotovo. 'sp-status' za pregled."

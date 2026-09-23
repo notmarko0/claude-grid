@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Paste a brief into a live Claude Grid pane, safely.
+# Usage: sp-paste <pane-id> <brief-file>
+# Guards: pane cwd must be a worktree of an enrolled pool; composer must be empty.
+set -euo pipefail
+pane="$1"; file="$2"
+
+cwd=$(tmux display-message -p -t "$pane" '#{pane_current_path}')
+if ! "$HOME/.local/bin/sp-poolof" "$cwd" >/dev/null 2>&1 || ! case "$(basename "$cwd")" in *-wt[0-9]*) true ;; *) false ;; esac; then
+  echo "REFUSED: $pane cwd=$cwd is not a pool worktree" >&2; exit 1
+fi
+
+# Composer emptiness. The prompt marker is U+276F, padding is U+00A0 (NBSP);
+# tr is byte-oriented and mangles both, so the test is done in Python.
+line=$(tmux capture-pane -p -t "$pane" | grep -E '^[[:space:]]*[│|]?[[:space:]]*❯' | tail -1 || true)
+if [ -n "$line" ]; then
+  empty=$(python3 -c '
+import sys
+s = sys.stdin.read()
+i = s.find("❯")
+rest = s[i+1:] if i >= 0 else s
+rest = "".join(c for c in rest if not c.isspace() and c not in "│|╭╮╰╯─█▌")
+print("yes" if not rest else "no")' <<<"$line")
+  if [ "$empty" = "no" ]; then
+    echo "WARN: $pane composer not empty (may be a rendered suggestion, not real input):" >&2
+    echo "  $line" >&2
+    [ "${FORCE:-0}" = "1" ] || { echo "REFUSED (set FORCE=1 to override)" >&2; exit 2; }
+  fi
+fi
+
+buf="brief_$$"
+tmux load-buffer -b "$buf" "$file"
+tmux paste-buffer -p -b "$buf" -t "$pane"
+tmux delete-buffer -b "$buf"
+sleep 1
+tmux send-keys -t "$pane" Enter
+echo "OK: pasted $(wc -l < "$file") lines into $pane ($cwd)"

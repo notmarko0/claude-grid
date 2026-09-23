@@ -1,0 +1,26 @@
+#!/bin/bash
+# sp-status [label]
+# Tablica stanja poola: WT / GRANA / STANJE / VLASNIK / DIRTY / AHEAD-BEHIND(integ).
+set -euo pipefail
+. "$HOME/.local/bin/sp-common.sh"
+
+LABEL="${1:-}"; [ -z "$LABEL" ] && { LABEL=$(sp_label_for "$PWD") || true; }
+[ -z "$LABEL" ] && { echo "Nema poola (daj label ili uđi u repo)." >&2; exit 1; }
+
+integ=$(sp_integ "$LABEL"); integ_ref=$(sp_integ_ref "$LABEL")
+sp_reap_stale "$LABEL"
+
+printf '%-6s %-26s %-13s %-16s %-6s %s\n' WT GRANA STANJE VLASNIK DIRTY "AH/BE($integ)"
+while IFS=$'\t' read -r n path; do
+  br=$(sp_wt_branch "$path"); [ -z "$br" ] && br="-"
+  if sp_is_locked "$LABEL" "$n"; then
+    slug=$(sp_lock_meta "$LABEL" "$n" slug); pane=$(sp_lock_meta "$LABEL" "$n" pane); pid=$(sp_lock_meta "$LABEL" "$n" pid)
+    state="ZAUZET(${slug:-?})"; owner="${pane:-pid:$pid}"
+  else
+    state="slobodan"; owner="-"
+  fi
+  sp_wt_clean "$path" && dirty="ne" || dirty="DA"
+  ahead=$(git -C "$path" rev-list --count "$integ_ref..HEAD" 2>/dev/null || echo 0)
+  behind=$(git -C "$path" rev-list --count "HEAD..$integ_ref" 2>/dev/null || echo 0)
+  printf '%-6s %-26s %-13s %-16s %-6s +%s/-%s\n' "wt$n" "$br" "$state" "$owner" "$dirty" "$ahead" "$behind"
+done < <(sp_worktrees "$LABEL")

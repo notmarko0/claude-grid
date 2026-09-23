@@ -1,0 +1,11 @@
+# Claude Grid postavke — ovaj fajl se učitava (source) pri svakom otvaranju panela.
+# Lokacija: ~/.config/claudegrid/config
+
+# Putanja do claude naredbe (prazno = nađi automatski u PATH-u).
+# CLAUDE_BIN="$HOME/.local/bin/claude"
+
+# Dodatne zastavice za svaki panel.
+# Prazno (default) = Claude pita dozvolu prije naredbi i izmjena fajlova (sigurnije).
+# "--dangerously-skip-permissions" = ne pita ništa (brže, tako radi autor grida),
+#   ali Claude tada smije sve bez pitanja — uključi samo ako znaš što to znači.
+CLAUDE_GRID_FLAGS=""

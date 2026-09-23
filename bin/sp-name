@@ -1,0 +1,23 @@
+#!/bin/bash
+# sp-name <slug>
+# Preimenuje granu trenutnog worktreeja: scratch/wtN -> feat/<slug>.
+set -euo pipefail
+. "$HOME/.local/bin/sp-common.sh"
+
+SLUG="${1:-}"; [ -z "$SLUG" ] && { echo "korištenje: sp-name <slug>" >&2; exit 1; }
+LABEL=$(sp_label_for "$PWD") || { echo "Nema poola za ovu mapu." >&2; exit 1; }
+wt=$(git rev-parse --show-toplevel)
+root=$(sp_repo_root)
+[ "$wt" = "$root" ] && { echo "Ne preimenuj granu u glavnom repou — pokreni u worktreeju." >&2; exit 1; }
+
+n=$(sp_wt_index "$wt" "$LABEL")
+cur=$(sp_wt_branch "$wt")
+new="feat/$SLUG"
+git -C "$wt" show-ref --verify --quiet "refs/heads/$new" && { echo "Grana '$new' već postoji." >&2; exit 1; }
+
+git -C "$wt" branch -m "$cur" "$new"
+ld=$(sp_lock_dir "$LABEL" "$n")
+# prenosivo (BSD i GNU sed): bez 'sed -i'
+[ -f "$ld/meta" ] && sed "s/^slug=.*/slug=$SLUG/" "$ld/meta" >"$ld/meta.tmp" 2>/dev/null && mv "$ld/meta.tmp" "$ld/meta" || true
+sp_regen_mirror "$LABEL"
+echo "$new"

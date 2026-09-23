@@ -1,0 +1,79 @@
+#!/bin/bash
+# sp-open <wtN|putanja|grana> [--label=NAME]
+# Zaključa ODREĐENI worktree i ispiše njegovu putanju (kao sp-claim, ali bez birania).
+#
+# Razlika od sp-claim: sp-claim traži SLOBODAN stol i **resetira ga** na integ granu
+# (`checkout -B scratch/wtN`). sp-open ne dira granu ni radnu kopiju — služi da se
+# vratiš na POSTOJEĆI rad. Reset postojećeg stola bi uništio taj rad.
+#
+# Cilj se može zadati na tri načina:
+#   sp-open wt2                  # po indeksu stola
+#   sp-open feat/back-button     # po grani (nađe stol koji ju drži)
+#   sp-open ~/projekti/mojrepo-wt2
+set -uo pipefail
+. "$HOME/.local/bin/sp-common.sh"
+
+TARGET=""; LABEL=""; PEEK=0
+for a in "$@"; do
+  case "$a" in
+    --label=*) LABEL="${a#--label=}" ;;
+    --peek)    PEEK=1 ;;   # samo razriješi i ispiši putanju, BEZ zaključavanja
+    --*)       ;;
+    *)         [ -z "$TARGET" ] && TARGET="$a" ;;
+  esac
+done
+[ -z "$TARGET" ] && { echo "korištenje: sp-open [--peek] <wtN|putanja|grana>" >&2; exit 1; }
+
+# Label: iz --label, iz ciljne putanje (ako je putanja), inače iz $PWD.
+if [ -z "$LABEL" ] && [ -d "$TARGET" ]; then LABEL=$(sp_label_for "$TARGET" 2>/dev/null || true); fi
+[ -z "$LABEL" ] && { LABEL=$(sp_label_for "$PWD" 2>/dev/null || true); }
+[ -z "$LABEL" ] && { echo "Nema poola za ovu mapu ni za cilj '$TARGET'." >&2; exit 1; }
+
+sp_reap_stale "$LABEL"
+
+# --- razriješi cilj u putanju stola ---
+path=""
+case "$TARGET" in
+  wt[0-9]*|WT[0-9]*)
+    want="${TARGET#[wW][tT]}"
+    while IFS=$'\t' read -r n p; do [ "$n" = "$want" ] && { path="$p"; break; }; done < <(sp_worktrees "$LABEL")
+    ;;
+  */*|~*|.*)
+    # putanja — kanonikaliziraj pa provjeri je li uopće stol ovog poola
+    cand=$(cd "${TARGET/#\~/$HOME}" 2>/dev/null && pwd -P) || true
+    while IFS=$'\t' read -r n p; do [ "$p" = "$cand" ] && { path="$p"; break; }; done < <(sp_worktrees "$LABEL")
+    ;;
+esac
+
+# Nije indeks ni putanja stola -> probaj kao ime grane.
+if [ -z "$path" ]; then
+  while IFS=$'\t' read -r n p; do
+    [ "$(sp_wt_branch "$p")" = "$TARGET" ] && { path="$p"; break; }
+  done < <(sp_worktrees "$LABEL")
+fi
+
+if [ -z "$path" ]; then
+  echo "Ne mogu naći stol za '$TARGET'." >&2
+  echo "Dostupni stolovi (sp-status za detalje):" >&2
+  while IFS=$'\t' read -r n p; do
+    printf '  wt%s\t%s\n' "$n" "$(sp_wt_branch "$p")" >&2
+  done < <(sp_worktrees "$LABEL")
+  exit 1
+fi
+
+n=$(sp_wt_index "$path" "$LABEL")
+
+# --peek: samo ispiši gdje bi otišao. Bez lockanja — da preview (npr.
+# `claude-grid-tmux.sh --dry-run`) ne ostavlja zaključane stolove za sobom.
+[ "$PEEK" = 1 ] && { echo "$path"; exit 0; }
+
+# Zaključaj ako je slobodan. Ako je već zaključan, to je najčešće živi panel na
+# istom stolu — dopuštamo (dvije sesije u istoj mapi nisu opasne), samo javimo.
+if sp_is_locked "$LABEL" "$n"; then
+  echo "wt$n je već zaključan (vjerojatno živ panel) — otvaram uz njega." >&2
+else
+  sp_lock "$LABEL" "$n" "$(sp_wt_branch "$path")" || true
+fi
+
+sp_regen_mirror "$LABEL"
+echo "$path"

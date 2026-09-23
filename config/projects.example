@@ -1,0 +1,6 @@
+# Claude Grid favoriti — projekti ponuđeni kad pokreneš `claude-grid`.
+# Format: Labela = putanja   (~ je dopušten; redovi s # i prazni se ignoriraju)
+# Na Windowsu (WSL) drži projekte UNUTAR Linuxa (~/...), ne na /mnt/c — puno je brže.
+home = ~
+# primjer:
+# Moja aplikacija = ~/projekti/moja-aplikacija

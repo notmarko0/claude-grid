@@ -1,0 +1,4 @@
+# Skripte MORAJU imati LF (Linux) krajeve redova, i kad se repo klonira na Windowsu —
+# inače bash javlja "$'\r': command not found".
+* text=auto eol=lf
+*.bat text eol=crlf

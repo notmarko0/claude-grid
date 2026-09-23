@@ -1,0 +1,31 @@
+#!/bin/bash
+# sp-adopt <grana> [label]
+# Ubaci postojeću granu u slobodan worktree (za migraciju postojećih feat grana).
+set -euo pipefail
+. "$HOME/.local/bin/sp-common.sh"
+
+BR="${1:-}"; [ -z "$BR" ] && { echo "korištenje: sp-adopt <grana> [label]" >&2; exit 1; }
+LABEL="${2:-}"; [ -z "$LABEL" ] && { LABEL=$(sp_label_for "$PWD") || true; }
+[ -z "$LABEL" ] && { echo "Nema poola." >&2; exit 1; }
+
+sp_reap_stale "$LABEL"
+root=$(sp_pool_get "$LABEL" repo)
+git -C "$root" show-ref --verify --quiet "refs/heads/$BR" || { echo "Grana '$BR' ne postoji." >&2; exit 1; }
+integ_ref=$(sp_integ_ref "$LABEL")
+
+sel=""
+{ while IFS=$'\t' read -r n path; do
+  sp_is_locked "$LABEL" "$n" && continue
+  case "$(sp_wt_branch "$path")" in scratch/*) ;; *) continue ;; esac
+  sp_wt_clean "$path" || continue
+  [ "$(sp_wt_ahead "$path" "$integ_ref")" = 0 ] || continue
+  sel="$n	$path"; break
+done < <(sp_worktrees "$LABEL"); } || true
+[ -z "$sel" ] && { echo "Nema slobodnog worktreeja (vidi sp-status)." >&2; exit 1; }
+
+n="${sel%%	*}"; path="${sel#*	}"
+# git blokira ako je grana checkoutana u drugom worktreeju — to je OK, željeni signal
+git -C "$path" checkout "$BR" >/dev/null 2>&1 || { echo "Ne mogu checkout '$BR' u wt$n (možda je checkoutana u drugom worktreeju)." >&2; exit 1; }
+sp_lock "$LABEL" "$n" "${BR#feat/}"
+sp_regen_mirror "$LABEL"
+echo "$path"

@@ -1,0 +1,41 @@
+#!/bin/bash
+# sp-claim [slug] [--label=NAME]
+# Zaključa slobodan (ili kreira novi) worktree, resetira ga na integ granu, ispiše putanju.
+# Slobodan = bez locka & na scratch/* & čist & bez nemergeanog rada (ahead==0).
+set -euo pipefail
+. "$HOME/.local/bin/sp-common.sh"
+
+SLUG=""; LABEL=""
+for a in "$@"; do case "$a" in --label=*) LABEL="${a#--label=}" ;; --*) ;; *) SLUG="$a" ;; esac; done
+[ -z "$LABEL" ] && { LABEL=$(sp_label_for "$PWD") || true; }
+[ -z "$LABEL" ] && { echo "Nema poola za ovu mapu (pokreni sp-setup u repou)." >&2; exit 1; }
+
+sp_reap_stale "$LABEL"
+integ_ref=$(sp_integ_ref "$LABEL")
+
+path=""
+# { … } grupa (isti shell → dodjela 'path' opstaje) + || true da set -e ne puca na status petlje
+{ while IFS=$'\t' read -r n p; do
+  sp_is_locked "$LABEL" "$n" && continue
+  case "$(sp_wt_branch "$p")" in scratch/*) ;; *) continue ;; esac
+  sp_wt_clean "$p" || continue
+  [ "$(sp_wt_ahead "$p" "$integ_ref")" = 0 ] || continue
+  if sp_lock "$LABEL" "$n" "$SLUG"; then path="$p"; break; fi
+done < <(sp_worktrees "$LABEL"); } || true
+
+if [ -z "$path" ]; then
+  # auto-grow: sljedeći indeks iznad najvećeg postojećeg
+  root=$(sp_pool_get "$LABEL" repo); prefix=$(sp_pool_get "$LABEL" prefix); parent=$(dirname "$root")
+  max=$(sp_worktrees "$LABEL" | tail -n1 | cut -f1); max="${max:-0}"
+  n=$((max + 1)); path="$parent/$prefix$n"
+  git -C "$root" worktree add "$path" -b "scratch/wt$n" "$integ_ref" >/dev/null
+  sp_lock "$LABEL" "$n" "$SLUG" || true
+fi
+
+n=$(sp_wt_index "$path" "$LABEL")
+git -C "$path" fetch origin --quiet 2>/dev/null || true
+integ_ref=$(sp_integ_ref "$LABEL")
+git -C "$path" checkout -B "scratch/wt$n" "$integ_ref" >/dev/null 2>&1 || true
+sp_regen_mirror "$LABEL"
+[ -n "$SLUG" ] && ( cd "$path" && "$HOME/.local/bin/sp-name" "$SLUG" >/dev/null ) || true
+echo "$path"

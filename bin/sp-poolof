@@ -1,0 +1,10 @@
+#!/bin/bash
+# sp-poolof [dir]
+# Ispiše pool label ako je mapa (ili worktree) dio enrolled repoa; inače exit 1.
+# Radi iz glavnog repoa I iz svih worktreejeva (rezolucija preko git-common-dir).
+set -euo pipefail
+. "$HOME/.local/bin/sp-common.sh"
+
+lbl=$(sp_label_for "${1:-$PWD}") || exit 1
+[ -n "$lbl" ] || exit 1
+echo "$lbl"

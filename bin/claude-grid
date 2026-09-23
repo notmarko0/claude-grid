@@ -1,0 +1,65 @@
+#!/bin/bash
+# claude-grid [N] [DIR]
+# Pokretač Claude Grida (zamjena za Mac ClaudeGrid.app — radi u Windows Terminalu/WSL-u,
+# Linuxu i Macu). Bez argumenata pita:
+#   1) koliko panela (1-16, Enter = zadnji/4)
+#   2) u kojem projektu (fzf lista favorita iz ~/.config/claudegrid/projects
+#      + "Ostalo… (upiši putanju)")
+# pa zapamti izbor (~/.config/claudegrid/last) i otvori grid (claude-grid-tmux.sh N DIR).
+# S argumentima samo proslijedi: claude-grid 4 ~/projekti/app
+
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+CFG_DIR="$HOME/.config/claudegrid"
+LASTF="$CFG_DIR/last"
+LASTN="$CFG_DIR/last-n"
+mkdir -p "$CFG_DIR"
+
+[ $# -gt 0 ] && exec "$HOME/.local/bin/claude-grid-tmux.sh" "$@"
+
+if [ -n "${TMUX:-}" ]; then
+	echo "Već si unutar tmuxa. Za novi panel koristi Ctrl-b n; za novi grid otvori novi prozor terminala."
+	exit 1
+fi
+
+defn=$(cat "$LASTN" 2>/dev/null); case "$defn" in ''|*[!0-9]*) defn=4 ;; esac
+printf 'Koliko Claude panela? (1-16) [%s]: ' "$defn"
+read -r N
+N="${N:-$defn}"
+case "$N" in ''|*[!0-9]*) echo "Nije broj: $N"; exit 1 ;; esac
+[ "$N" -lt 1 ] && N=1; [ "$N" -gt 16 ] && N=16
+echo "$N" >"$LASTN"
+
+OTHER="Ostalo… (upiši putanju)"
+last=$(cat "$LASTF" 2>/dev/null)
+lastlabel=""
+[ -n "$last" ] && lastlabel=$("$HOME/.local/bin/claude-grid-projects.sh" --label "$last" 2>/dev/null)
+
+# lista: zadnji izbor prvi, pa ostali favoriti, pa "Ostalo…"
+labels() {
+	[ -n "$lastlabel" ] && printf '%s\n' "$lastlabel"
+	"$HOME/.local/bin/claude-grid-projects.sh" --labels | grep -vxF -- "${lastlabel:-\\0}"
+	printf '%s\n' "$OTHER"
+}
+
+if command -v fzf >/dev/null 2>&1; then
+	pick=$(labels | fzf --height=40% --reverse --prompt='projekt > ' \
+		--header='odaberi projekt (Esc = odustani) · favoriti: ~/.config/claudegrid/projects')
+else
+	echo "Projekti:"; i=0
+	while IFS= read -r l; do i=$((i + 1)); printf '  %d) %s\n' "$i" "$l"; done < <(labels)
+	printf 'Broj [1]: '; read -r k; k="${k:-1}"
+	pick=$(labels | sed -n "${k}p")
+fi
+[ -z "$pick" ] && { echo "Odustao."; exit 0; }
+
+if [ "$pick" = "$OTHER" ]; then
+	printf 'Putanja projekta: '; read -r DIR
+	DIR="${DIR/#\~/$HOME}"
+else
+	DIR=$("$HOME/.local/bin/claude-grid-projects.sh" --path "$pick")
+	[ -z "$DIR" ] && [ "$pick" = "home" ] && DIR="$HOME"
+fi
+[ -d "$DIR" ] || { echo "Mapa ne postoji: $DIR"; exit 1; }
+
+echo "$DIR" >"$LASTF"
+exec "$HOME/.local/bin/claude-grid-tmux.sh" "$N" "$DIR"
